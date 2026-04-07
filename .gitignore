@@ -1,0 +1,44 @@
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# PM2
+ecosystem.config.js
+.pm2/
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+
+# Logs
+logs/
+*.log
+
+# Build
+dist/
+build/
+
+# Testing
+.pytest_cache/
+coverage/
+
+# Backups
+*.backup
+*.bak
+.backup/
