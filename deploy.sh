@@ -499,8 +499,7 @@ provision_ssl_certificate() {
         -d "$DOMAIN" \
         --email admin@arjun10.tech \
         --agree-tos \
-        --non-interactive \
-        --allow-renewal-with-new-arpn=true || log_error "Certificate provisioning failed - ensure domain DNS is properly configured"
+        --non-interactive || log_error "Certificate provisioning failed - ensure domain DNS is properly configured"
     
     # Verify certificate was created
     if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
