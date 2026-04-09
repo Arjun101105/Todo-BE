@@ -293,33 +293,7 @@ EOF
     log_success "Rate limiting configuration created"
 }
 
-create_nginx_temporary_config() {
-    log_info "Creating temporary HTTP-only Nginx config for SSL provisioning..."
-    
-    cat > "/etc/nginx/sites-available/todo-api" << 'EOF'
-# Temporary HTTP-only config for SSL provisioning
-server {
-    listen 80;
-    listen [::]:80;
-    server_name api.taskflow.arjun10.tech;
-    
-    # Serve ACME challenge files for Let's Encrypt
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
-    }
-    
-    # Proxy requests to Node.js app
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-EOF
-    
-    log_success "Temporary Nginx configuration created"
-}
+
 
 create_nginx_config() {
     log_info "Creating production HTTPS Nginx configuration..."
@@ -474,39 +448,27 @@ enable_nginx_service() {
 provision_ssl_certificate() {
     log_info "Provisioning Let's Encrypt SSL certificate for $DOMAIN..."
     
-    # Create certbot directory
-    mkdir -p /var/www/certbot
-    
-    # Step 1: Apply temporary HTTP-only config (required for Let's Encrypt verification)
-    log_info "Step 1: Applying temporary HTTP-only config for certificate provisioning..."
-    create_nginx_temporary_config
-    
-    # Test and reload temporary config
-    if nginx -t; then
-        systemctl reload nginx
-        log_success "Temporary Nginx config applied"
-    else
-        log_error "Temporary Nginx config test failed"
-    fi
-    
-    # Wait for Nginx to be ready
+    # Step 1: Stop Nginx (required for --standalone mode)
+    log_info "Step 1: Stopping Nginx for certificate provisioning..."
+    systemctl stop nginx
     sleep 2
     
-    # Step 2: Request certificate with working HTTP server
-    log_info "Step 2: Requesting certificate from Let's Encrypt..."
-    certbot certonly --webroot \
-        -w /var/www/certbot \
+    # Step 2: Request certificate using standalone mode (proven reliable)
+    log_info "Step 2: Requesting certificate from Let's Encrypt (standalone mode)..."
+    certbot certonly --standalone \
         -d "$DOMAIN" \
         --email admin@arjun10.tech \
         --agree-tos \
         --non-interactive || log_error "Certificate provisioning failed - ensure domain DNS is properly configured"
     
-    # Verify certificate was created
+    # Step 3: Verify certificate was created
     if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
         log_error "SSL certificate not found after provisioning. Check DNS and try again."
     fi
     
     log_success "SSL certificate provisioned successfully"
+    
+    # Nginx will be restarted in the next phase
 }
 
 setup_ssl_auto_renewal() {
@@ -635,12 +597,12 @@ main() {
     start_pm2
     echo ""
     
-    # Phase 4: Nginx Configuration
+    # Phase 4: Nginx Configuration (rate limiting only)
     log_info "=== PHASE 4: Nginx Configuration ==="
     create_rate_limiting_config
     echo ""
     
-    # Phase 5: SSL Certificate (includes temporary config, cert provisioning, final config)
+    # Phase 5: SSL Certificate (standalone mode - stops nginx temporarily)
     log_info "=== PHASE 5: SSL Certificate Setup ==="
     provision_ssl_certificate
     echo ""
