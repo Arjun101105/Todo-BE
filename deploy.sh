@@ -58,27 +58,38 @@ check_prerequisite() {
         return 0
     fi
     
-    # Check if .env exists in current directory
+    local env_file=""
+    
+    # Check if .env exists in current working directory
     if [[ -f ".env" ]]; then
-        log_info ".env found in current directory, copying to $APP_PATH/.env"
-        sudo cp .env "$APP_PATH/.env"
-        sudo chown root:root "$APP_PATH/.env"
-        sudo chmod 600 "$APP_PATH/.env"
-        log_success ".env copied to $APP_PATH/.env"
-        return 0
+        env_file=".env"
+        log_info ".env found in current directory"
     fi
     
-    # Check if .env exists in home directory
-    if [[ -f "$HOME/.env" ]]; then
-        log_info ".env found in home directory, copying to $APP_PATH/.env"
-        cp "$HOME/.env" "$APP_PATH/.env"
+    # Check if .env exists in /tmp (sometimes copied there)
+    if [[ -z "$env_file" ]] && [[ -f "/tmp/.env" ]]; then
+        env_file="/tmp/.env"
+        log_info ".env found in /tmp directory"
+    fi
+    
+    # Check if .env exists in /root home
+    if [[ -z "$env_file" ]] && [[ -f "/root/.env" ]]; then
+        env_file="/root/.env"
+        log_info ".env found in /root home directory"
+    fi
+    
+    # If we found the file, copy it to app directory
+    if [[ -n "$env_file" ]]; then
+        log_info "Copying .env from $env_file to $APP_PATH/.env"
+        cp "$env_file" "$APP_PATH/.env"
+        chown root:root "$APP_PATH/.env"
         chmod 600 "$APP_PATH/.env"
-        log_success ".env copied to $APP_PATH/.env"
+        log_success ".env successfully copied to $APP_PATH/.env"
         return 0
     fi
     
     # .env not found anywhere
-    log_error \".env file not found in any location! Please create .env with: MONGO_URI, JWT_SECRET, PORT, NODE_ENV, CORS_ORIGIN and place in: $APP_PATH/.env, current dir, or ~/.env\"
+    log_error ".env file not found in any of: current dir, /tmp, /root - create .env and try again"
 }
 
 ###############################################################################
