@@ -624,9 +624,9 @@ main() {
     
     # Phase 2: Project Setup
     log_info "=== PHASE 2: Project Setup ==="
+    check_prerequisite
     setup_project_directory
     validate_environment
-    check_prerequisite
     install_project_dependencies
     echo ""
     
