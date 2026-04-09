@@ -52,9 +52,33 @@ check_root() {
 }
 
 check_prerequisite() {
-    if [[ ! -f "$APP_PATH/.env" ]]; then
-        log_error ".env file not found at $APP_PATH/.env. Please stage .env before deployment."
+    # Check if .env exists at expected location
+    if [[ -f "$APP_PATH/.env" ]]; then
+        log_success ".env file found at $APP_PATH/.env"
+        return 0
     fi
+    
+    # Check if .env exists in current directory
+    if [[ -f ".env" ]]; then
+        log_info ".env found in current directory, copying to $APP_PATH/.env"
+        sudo cp .env "$APP_PATH/.env"
+        sudo chown root:root "$APP_PATH/.env"
+        sudo chmod 600 "$APP_PATH/.env"
+        log_success ".env copied to $APP_PATH/.env"
+        return 0
+    fi
+    
+    # Check if .env exists in home directory
+    if [[ -f "$HOME/.env" ]]; then
+        log_info ".env found in home directory, copying to $APP_PATH/.env"
+        cp "$HOME/.env" "$APP_PATH/.env"
+        chmod 600 "$APP_PATH/.env"
+        log_success ".env copied to $APP_PATH/.env"
+        return 0
+    fi
+    
+    # .env not found anywhere
+    log_error \".env file not found in any location! Please create .env with: MONGO_URI, JWT_SECRET, PORT, NODE_ENV, CORS_ORIGIN and place in: $APP_PATH/.env, current dir, or ~/.env\"
 }
 
 ###############################################################################
@@ -245,8 +269,49 @@ start_pm2() {
 # Phase 4: Nginx Configuration
 ###############################################################################
 
+create_rate_limiting_config() {
+    log_info "Creating rate limiting configuration..."
+    
+    mkdir -p /etc/nginx/conf.d
+    
+    cat > "/etc/nginx/conf.d/rate-limiting.conf" << 'EOF'
+# Rate limiting zone (defined at http level, usable in server blocks)
+limit_req_zone $binary_remote_addr zone=api_rate:10m rate=100r/s;
+EOF
+    
+    log_success "Rate limiting configuration created"
+}
+
+create_nginx_temporary_config() {
+    log_info "Creating temporary HTTP-only Nginx config for SSL provisioning..."
+    
+    cat > "/etc/nginx/sites-available/todo-api" << 'EOF'
+# Temporary HTTP-only config for SSL provisioning
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.taskflow.arjun10.tech;
+    
+    # Serve ACME challenge files for Let's Encrypt
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+    
+    # Proxy requests to Node.js app
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+EOF
+    
+    log_success "Temporary Nginx configuration created"
+}
+
 create_nginx_config() {
-    log_info "Creating Nginx configuration..."
+    log_info "Creating production HTTPS Nginx configuration..."
     
     cat > "/etc/nginx/sites-available/todo-api" << 'EOF'
 # Upstream for PM2 clustering
@@ -305,8 +370,7 @@ server {
                application/json application/javascript;
     gzip_min_length 1000;
     
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api_rate:10m rate=100r/s;
+    # Rate limiting (zone defined in /etc/nginx/conf.d/rate-limiting.conf)
     limit_req zone=api_rate burst=200 nodelay;
     
     # Timeouts
@@ -402,22 +466,37 @@ provision_ssl_certificate() {
     # Create certbot directory
     mkdir -p /var/www/certbot
     
-    # Request certificate (this will fail if domain doesn't resolve, but that's OK - manual setup needed)
+    # Step 1: Apply temporary HTTP-only config (required for Let's Encrypt verification)
+    log_info "Step 1: Applying temporary HTTP-only config for certificate provisioning..."
+    create_nginx_temporary_config
+    
+    # Test and reload temporary config
+    if nginx -t; then
+        systemctl reload nginx
+        log_success "Temporary Nginx config applied"
+    else
+        log_error "Temporary Nginx config test failed"
+    fi
+    
+    # Wait for Nginx to be ready
+    sleep 2
+    
+    # Step 2: Request certificate with working HTTP server
+    log_info "Step 2: Requesting certificate from Let's Encrypt..."
     certbot certonly --webroot \
         -w /var/www/certbot \
         -d "$DOMAIN" \
         --email admin@arjun10.tech \
         --agree-tos \
         --non-interactive \
-        --allow-renewal-with-new-arpn=true \
-        2>&1 || log_warning "SSL certificate provisioning needs manual domain verification"
+        --allow-renewal-with-new-arpn=true || log_error "Certificate provisioning failed - ensure domain DNS is properly configured"
     
-    # If certificate exists, update Nginx
-    if [[ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
-        log_success "SSL certificate provisioned successfully"
-    else
-        log_warning "SSL certificate not yet available - domain must be properly configured and accessible"
+    # Verify certificate was created
+    if [[ ! -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]]; then
+        log_error "SSL certificate not found after provisioning. Check DNS and try again."
     fi
+    
+    log_success "SSL certificate provisioned successfully"
 }
 
 setup_ssl_auto_renewal() {
@@ -548,14 +627,23 @@ main() {
     
     # Phase 4: Nginx Configuration
     log_info "=== PHASE 4: Nginx Configuration ==="
+    create_rate_limiting_config
+    echo ""
+    
+    # Phase 5: SSL Certificate (includes temporary config, cert provisioning, final config)
+    log_info "=== PHASE 5: SSL Certificate Setup ==="
+    provision_ssl_certificate
+    echo ""
+    
+    # Phase 6: Final Nginx Configuration (with HTTPS)
+    log_info "=== PHASE 6: Applying Final HTTPS Configuration ==="
     create_nginx_config
     enable_nginx_site
     enable_nginx_service
     echo ""
     
-    # Phase 5: SSL Certificate
-    log_info "=== PHASE 5: SSL Certificate Setup ==="
-    provision_ssl_certificate
+    # Phase 7: SSL Auto-renewal
+    log_info "=== PHASE 7: Setting up SSL Auto-renewal ==="
     setup_ssl_auto_renewal
     echo ""
     
