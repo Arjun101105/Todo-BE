@@ -427,8 +427,9 @@ enable_nginx_site() {
     
     # Test Nginx configuration
     if nginx -t; then
-        systemctl reload nginx
-        log_success "Nginx configuration enabled and reloaded"
+        # Use restart instead of reload since Nginx may have been stopped during cert setup
+        systemctl restart nginx
+        log_success "Nginx configuration enabled and restarted"
     else
         log_error "Nginx configuration test failed. Please check /etc/nginx/sites-available/todo-api"
     fi
